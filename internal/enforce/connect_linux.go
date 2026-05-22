@@ -85,13 +85,19 @@ func (connectBackend) Run(request Request) (Result, error) {
 	if countErr != nil {
 		return Result{}, countErr
 	}
+	blockedTarget := "ipv4-connect"
+	if blockedAddr, ok, targetErr := objects.LastBlockedIPv4Addr(); targetErr != nil {
+		return Result{}, targetErr
+	} else if ok {
+		blockedTarget = blockedAddr.String()
+	}
 	recorder := report.New()
 	status := EnforcementSucceeded
 	for i := uint64(0); i < blockedConnects; i++ {
 		recorder.Record(report.Event{
 			Kind:     report.EventConnect,
 			Decision: report.DecisionWouldBlock,
-			Target:   "ipv4-connect",
+			Target:   blockedTarget,
 		})
 	}
 	switch {

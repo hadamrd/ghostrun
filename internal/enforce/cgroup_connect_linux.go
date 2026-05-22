@@ -4,6 +4,7 @@ package enforce
 
 import (
 	"fmt"
+	"net/netip"
 
 	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/asm"
@@ -24,10 +25,18 @@ func connect4DenyProgramSpec() *ebpf.ProgramSpec {
 			asm.Add.Imm(asm.R2, -8),
 			asm.StoreImm(asm.R2, 0, 32, asm.Word),
 			asm.LoadMem(asm.R3, asm.R6, 4, asm.Word),
+			asm.Mov.Reg(asm.R7, asm.R3),
 			asm.StoreMem(asm.R2, 4, asm.R3, asm.Word),
 			asm.FnMapLookupElem.Call(),
 			asm.JEq.Imm(asm.R0, 0, "allow"),
-			asm.LoadMapPtr(asm.R1, 0).WithReference("blocked_connects"),
+			asm.LoadMapPtr(asm.R1, 0).WithReference("last_blocked_ipv4"),
+			asm.Mov.Reg(asm.R2, asm.R10),
+			asm.Add.Imm(asm.R2, -12),
+			asm.StoreImm(asm.R2, 0, 0, asm.Word),
+			asm.FnMapLookupElem.Call(),
+			asm.JEq.Imm(asm.R0, 0, "count"),
+			asm.StoreMem(asm.R0, 0, asm.R7, asm.Word),
+			asm.LoadMapPtr(asm.R1, 0).WithReference("blocked_connects").WithSymbol("count"),
 			asm.Mov.Reg(asm.R2, asm.R10),
 			asm.Add.Imm(asm.R2, -12),
 			asm.StoreImm(asm.R2, 0, 0, asm.Word),
@@ -47,6 +56,7 @@ type connectObjects struct {
 	Program         *ebpf.Program `ebpf:"ghostrun_deny4"`
 	CIDRs           *ebpf.Map     `ebpf:"deny_cidrs"`
 	BlockedConnects *ebpf.Map     `ebpf:"blocked_connects"`
+	LastBlockedIPv4 *ebpf.Map     `ebpf:"last_blocked_ipv4"`
 }
 
 func (o connectObjects) Close() {
@@ -58,6 +68,9 @@ func (o connectObjects) Close() {
 	}
 	if o.BlockedConnects != nil {
 		o.BlockedConnects.Close()
+	}
+	if o.LastBlockedIPv4 != nil {
+		o.LastBlockedIPv4.Close()
 	}
 }
 
@@ -85,6 +98,12 @@ func loadConnectObjects(p policy.Policy) (connectObjects, error) {
 				Type:       ebpf.Array,
 				KeySize:    4,
 				ValueSize:  8,
+				MaxEntries: 1,
+			},
+			"last_blocked_ipv4": {
+				Type:       ebpf.Array,
+				KeySize:    4,
+				ValueSize:  4,
 				MaxEntries: 1,
 			},
 		},
@@ -134,4 +153,18 @@ func (o connectObjects) BlockedConnectCount() (uint64, error) {
 		return 0, fmt.Errorf("read blocked connect count: %w", err)
 	}
 	return count, nil
+}
+
+func (o connectObjects) LastBlockedIPv4Addr() (netip.Addr, bool, error) {
+	var raw [4]byte
+	if o.LastBlockedIPv4 == nil {
+		return netip.Addr{}, false, nil
+	}
+	if err := o.LastBlockedIPv4.Lookup(uint32(0), &raw); err != nil {
+		return netip.Addr{}, false, fmt.Errorf("read last blocked IPv4: %w", err)
+	}
+	if raw == [4]byte{} {
+		return netip.Addr{}, false, nil
+	}
+	return netip.AddrFrom4(raw), true, nil
 }

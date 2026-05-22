@@ -260,6 +260,9 @@ func TestConnectBackendRunReportsBlockedConnectWhenCommandHandlesError(t *testin
 	if len(result.Events) != 1 || result.Events[0].Kind != report.EventConnect || result.Events[0].Decision != report.DecisionWouldBlock {
 		t.Fatalf("unexpected blocked events %#v", result.Events)
 	}
+	if result.Events[0].Target != "127.0.0.1" {
+		t.Fatalf("blocked event target = %q, want 127.0.0.1", result.Events[0].Target)
+	}
 }
 
 func TestConnectBackendStartsCommandInsideCgroup(t *testing.T) {
