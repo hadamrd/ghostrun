@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"syscall"
 	"time"
 
 	"github.com/cilium/ebpf"
@@ -51,19 +52,24 @@ func (connectBackend) Run(request Request) (Result, error) {
 	}
 	defer attached.Close()
 
+	cgroupDir, err := os.Open(cgroupPath)
+	if err != nil {
+		return Result{}, fmt.Errorf("open cgroup: %w", err)
+	}
+	defer cgroupDir.Close()
+
 	cmd := exec.Command(request.Command[0], request.Command[1:]...)
 	if request.Env != nil {
 		cmd.Env = request.Env
+	}
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		UseCgroupFD: true,
+		CgroupFD:    int(cgroupDir.Fd()),
 	}
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Start(); err != nil {
 		return Result{}, fmt.Errorf("start command: %w", err)
-	}
-	if err := os.WriteFile(filepath.Join(cgroupPath, "cgroup.procs"), []byte(fmt.Sprint(cmd.Process.Pid)), 0o644); err != nil {
-		_ = cmd.Process.Kill()
-		_ = cmd.Wait()
-		return Result{}, fmt.Errorf("join command cgroup: %w", err)
 	}
 	if request.ReadyFile != "" {
 		if err := os.WriteFile(request.ReadyFile, []byte("ready\n"), 0o644); err != nil {

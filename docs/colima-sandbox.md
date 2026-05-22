@@ -26,7 +26,7 @@ Run the Linux test suite from macOS:
 scripts/test-linux.sh
 ```
 
-That script uses a privileged Docker container so the Linux integration test can create a temporary cgroup, attach the cgroup/connect4 program, run a command inside the cgroup, and prove the command cannot open an IPv4 TCP connection while inside that cgroup.
+That script uses a privileged Docker container so the Linux integration test can create a temporary cgroup, attach the cgroup/connect4 program, start a command directly inside the cgroup with `UseCgroupFD`, and prove the command cannot open an IPv4 TCP connection while inside that cgroup.
 
 The connect policy is now CIDR-specific for IPv4: tests deny `127.0.0.0/8` and prove localhost is blocked, then deny `10.0.0.0/8` and prove localhost is allowed. Another test has the child handle the denied connect and exit `0`; Ghostrun still reports `blocked` from the BPF counter map.
 

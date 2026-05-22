@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -261,6 +262,43 @@ func TestConnectBackendRunReportsBlockedConnectWhenCommandHandlesError(t *testin
 	}
 }
 
+func TestConnectBackendStartsCommandInsideCgroup(t *testing.T) {
+	if os.Getenv("GHOSTRUN_CGROUP_CHILD") == "1" {
+		runCgroupChild(t)
+		return
+	}
+	if os.Getenv("GHOSTRUN_INTEGRATION") != "1" {
+		t.Skip("set GHOSTRUN_INTEGRATION=1 to run cgroup backend integration test")
+	}
+	if os.Geteuid() != 0 {
+		t.Skip("cgroup backend integration test requires root")
+	}
+
+	p, err := policy.New(policy.Options{DeniedConnectCIDRs: []string{"127.0.0.0/8"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := Run(Request{
+		Policy: p,
+		Command: []string{
+			os.Args[0],
+			"-test.run", "^TestConnectBackendStartsCommandInsideCgroup$",
+		},
+		Env: append(os.Environ(),
+			"GHOSTRUN_CGROUP_CHILD=1",
+		),
+	})
+	if err != nil {
+		t.Fatalf("run command with connect backend: %v", err)
+	}
+	if result.ExitCode != 0 {
+		t.Fatalf("exit code = %d, want 0", result.ExitCode)
+	}
+	if result.Status != EnforcementSucceeded {
+		t.Fatalf("status = %q, want %q", result.Status, EnforcementSucceeded)
+	}
+}
+
 func TestConnectBackendRunAllowsNonNetworkCommand(t *testing.T) {
 	if os.Getenv("GHOSTRUN_INTEGRATION") != "1" {
 		t.Skip("set GHOSTRUN_INTEGRATION=1 to run cgroup backend integration test")
@@ -288,6 +326,16 @@ func TestConnectBackendRunAllowsNonNetworkCommand(t *testing.T) {
 	}
 	if result.Summary.WouldBlock != 0 {
 		t.Fatalf("blocked summary = %#v, want no blocked events", result.Summary)
+	}
+}
+
+func runCgroupChild(t *testing.T) {
+	content, err := os.ReadFile("/proc/self/cgroup")
+	if err != nil {
+		t.Fatalf("read cgroup membership: %v", err)
+	}
+	if !strings.Contains(string(content), "ghostrun-") {
+		t.Fatalf("process did not start inside ghostrun cgroup: %s", content)
 	}
 }
 
