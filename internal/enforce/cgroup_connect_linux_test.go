@@ -18,14 +18,18 @@ import (
 )
 
 func TestConnect4DenyProgramSpecLoads(t *testing.T) {
-	program, err := ebpf.NewProgram(connect4DenyProgramSpec())
+	p, policyErr := policy.New(policy.Options{DeniedConnectCIDRs: []string{"127.0.0.0/8"}})
+	if policyErr != nil {
+		t.Fatal(policyErr)
+	}
+	objects, err := loadConnectObjects(p)
 	if errors.Is(err, ebpf.ErrNotSupported) {
 		t.Skipf("eBPF program loading unsupported: %v", err)
 	}
 	if err != nil {
 		t.Fatalf("load connect4 deny program: %v", err)
 	}
-	defer program.Close()
+	defer objects.Close()
 }
 
 func TestConnect4DenyProgramBlocksChildDial(t *testing.T) {
@@ -46,16 +50,20 @@ func TestConnect4DenyProgramBlocksChildDial(t *testing.T) {
 	}
 	defer os.Remove(cgroupPath)
 
-	program, err := ebpf.NewProgram(connect4DenyProgramSpec())
+	p, err := policy.New(policy.Options{DeniedConnectCIDRs: []string{"127.0.0.0/8"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	objects, err := loadConnectObjects(p)
 	if err != nil {
 		t.Fatalf("load connect4 deny program: %v", err)
 	}
-	defer program.Close()
+	defer objects.Close()
 
 	attached, err := link.AttachCgroup(link.CgroupOptions{
 		Path:    cgroupPath,
 		Attach:  ebpf.AttachCGroupInet4Connect,
-		Program: program,
+		Program: objects.Program,
 	})
 	if err != nil {
 		t.Fatalf("attach cgroup program: %v", err)
@@ -129,6 +137,7 @@ func TestConnectBackendRunBlocksCommandConnect(t *testing.T) {
 			"GHOSTRUN_BACKEND_CHILD=1",
 			"GHOSTRUN_TEST_ADDR="+listener.Addr().String(),
 			"GHOSTRUN_READY_FILE="+readyFile,
+			"GHOSTRUN_EXPECT_CONNECT=denied",
 		),
 		ReadyFile: readyFile,
 	})
@@ -143,6 +152,57 @@ func TestConnectBackendRunBlocksCommandConnect(t *testing.T) {
 	}
 	if result.Summary.WouldBlock == 0 {
 		t.Fatalf("expected blocked summary, got %#v", result.Summary)
+	}
+}
+
+func TestConnectBackendRunAllowsConnectOutsideDeniedCIDR(t *testing.T) {
+	if os.Getenv("GHOSTRUN_BACKEND_CHILD") == "1" {
+		runBackendChild(t)
+		return
+	}
+	if os.Getenv("GHOSTRUN_INTEGRATION") != "1" {
+		t.Skip("set GHOSTRUN_INTEGRATION=1 to run cgroup backend integration test")
+	}
+	if os.Geteuid() != 0 {
+		t.Skip("cgroup backend integration test requires root")
+	}
+
+	listener, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer listener.Close()
+
+	readyFile := filepath.Join(t.TempDir(), "ready")
+	p, err := policy.New(policy.Options{DeniedConnectCIDRs: []string{"10.0.0.0/8"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := Run(Request{
+		Policy: p,
+		Command: []string{
+			os.Args[0],
+			"-test.run", "^TestConnectBackendRunAllowsConnectOutsideDeniedCIDR$",
+		},
+		Env: append(os.Environ(),
+			"GHOSTRUN_BACKEND_CHILD=1",
+			"GHOSTRUN_TEST_ADDR="+listener.Addr().String(),
+			"GHOSTRUN_READY_FILE="+readyFile,
+			"GHOSTRUN_EXPECT_CONNECT=allowed",
+		),
+		ReadyFile: readyFile,
+	})
+	if err != nil {
+		t.Fatalf("run command with connect backend: %v", err)
+	}
+	if result.Status != EnforcementSucceeded {
+		t.Fatalf("status = %q, want %q", result.Status, EnforcementSucceeded)
+	}
+	if result.ExitCode != 0 {
+		t.Fatalf("exit code = %d, want 0", result.ExitCode)
+	}
+	if result.Summary.WouldBlock != 0 {
+		t.Fatalf("expected no blocked events, got %#v", result.Summary)
 	}
 }
 
@@ -179,6 +239,7 @@ func TestConnectBackendRunAllowsNonNetworkCommand(t *testing.T) {
 func runBackendChild(t *testing.T) {
 	readyFile := os.Getenv("GHOSTRUN_READY_FILE")
 	addr := os.Getenv("GHOSTRUN_TEST_ADDR")
+	expect := os.Getenv("GHOSTRUN_EXPECT_CONNECT")
 	if readyFile == "" || addr == "" {
 		t.Fatal("missing backend child test environment")
 	}
@@ -189,9 +250,19 @@ func runBackendChild(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	conn, err := net.DialTimeout("tcp4", addr, time.Second)
-	if err == nil {
+	switch expect {
+	case "allowed":
+		if err != nil {
+			t.Fatalf("dial to %s failed, want allowed connect: %v", addr, err)
+		}
 		conn.Close()
-		t.Fatalf("dial to %s succeeded, want denied connect", addr)
+	case "denied":
+		if err == nil {
+			conn.Close()
+			t.Fatalf("dial to %s succeeded, want denied connect", addr)
+		}
+		os.Exit(42)
+	default:
+		t.Fatalf("unknown GHOSTRUN_EXPECT_CONNECT %q", expect)
 	}
-	os.Exit(42)
 }

@@ -35,16 +35,16 @@ func (connectBackend) Run(request Request) (Result, error) {
 	}
 	defer os.Remove(cgroupPath)
 
-	program, err := ebpf.NewProgram(connect4DenyProgramSpec())
+	objects, err := loadConnectObjects(request.Policy)
 	if err != nil {
-		return Result{}, fmt.Errorf("load connect deny program: %w", err)
+		return Result{}, err
 	}
-	defer program.Close()
+	defer objects.Close()
 
 	attached, err := link.AttachCgroup(link.CgroupOptions{
 		Path:    cgroupPath,
 		Attach:  ebpf.AttachCGroupInet4Connect,
-		Program: program,
+		Program: objects.Program,
 	})
 	if err != nil {
 		return Result{}, fmt.Errorf("attach connect deny program: %w", err)

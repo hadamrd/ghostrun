@@ -3,8 +3,12 @@
 package enforce
 
 import (
+	"fmt"
+
 	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/asm"
+	"github.com/hadamrd/ghostrun/internal/policy"
+	"golang.org/x/sys/unix"
 )
 
 func connect4DenyProgramSpec() *ebpf.ProgramSpec {
@@ -14,8 +18,91 @@ func connect4DenyProgramSpec() *ebpf.ProgramSpec {
 		AttachType: ebpf.AttachCGroupInet4Connect,
 		License:    "MIT",
 		Instructions: asm.Instructions{
+			asm.Mov.Reg(asm.R6, asm.R1),
+			asm.LoadMapPtr(asm.R1, 0).WithReference("deny_cidrs"),
+			asm.Mov.Reg(asm.R2, asm.R10),
+			asm.Add.Imm(asm.R2, -8),
+			asm.StoreImm(asm.R2, 0, 32, asm.Word),
+			asm.LoadMem(asm.R3, asm.R6, 4, asm.Word),
+			asm.StoreMem(asm.R2, 4, asm.R3, asm.Word),
+			asm.FnMapLookupElem.Call(),
+			asm.JEq.Imm(asm.R0, 0, "allow"),
 			asm.LoadImm(asm.R0, 0, asm.DWord),
+			asm.Return(),
+			asm.LoadImm(asm.R0, 1, asm.DWord).WithSymbol("allow"),
 			asm.Return(),
 		},
 	}
+}
+
+type connectObjects struct {
+	Program *ebpf.Program `ebpf:"ghostrun_deny4"`
+	CIDRs   *ebpf.Map     `ebpf:"deny_cidrs"`
+}
+
+func (o connectObjects) Close() {
+	if o.Program != nil {
+		o.Program.Close()
+	}
+	if o.CIDRs != nil {
+		o.CIDRs.Close()
+	}
+}
+
+type lpmTrieKey struct {
+	PrefixLen uint32
+	Addr      [4]byte
+}
+
+func loadConnectObjects(p policy.Policy) (connectObjects, error) {
+	contents, err := connectCIDRContents(p)
+	if err != nil {
+		return connectObjects{}, err
+	}
+	spec := &ebpf.CollectionSpec{
+		Maps: map[string]*ebpf.MapSpec{
+			"deny_cidrs": {
+				Type:       ebpf.LPMTrie,
+				KeySize:    8,
+				ValueSize:  1,
+				MaxEntries: uint32(max(1, len(contents))),
+				Flags:      unix.BPF_F_NO_PREALLOC,
+				Contents:   contents,
+			},
+		},
+		Programs: map[string]*ebpf.ProgramSpec{
+			"ghostrun_deny4": connect4DenyProgramSpec(),
+		},
+	}
+	var objects connectObjects
+	if err := spec.LoadAndAssign(&objects, nil); err != nil {
+		return connectObjects{}, fmt.Errorf("load connect eBPF objects: %w", err)
+	}
+	return objects, nil
+}
+
+func connectCIDRContents(p policy.Policy) ([]ebpf.MapKV, error) {
+	prefixes := p.ConnectPrefixes()
+	contents := make([]ebpf.MapKV, 0, len(prefixes))
+	for _, prefix := range prefixes {
+		addr := prefix.Addr()
+		if !addr.Is4() {
+			continue
+		}
+		ones := prefix.Bits()
+		if ones < 0 || ones > 32 {
+			return nil, fmt.Errorf("invalid IPv4 prefix length %d", ones)
+		}
+		contents = append(contents, ebpf.MapKV{
+			Key: lpmTrieKey{
+				PrefixLen: uint32(ones),
+				Addr:      addr.As4(),
+			},
+			Value: uint8(1),
+		})
+	}
+	if len(contents) == 0 {
+		return nil, fmt.Errorf("at least one IPv4 deny CIDR is required")
+	}
+	return contents, nil
 }

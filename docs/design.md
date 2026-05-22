@@ -22,7 +22,7 @@ The planned Linux implementation should prefer eBPF LSM hooks where available. P
 
 The first working kernel-facing slice is cgroup/connect4: Ghostrun can build and load a minimal program spec in the Colima Linux sandbox, attach it to a temporary cgroup, run a command inside that cgroup, and block that command from opening an IPv4 TCP connection.
 
-The current Linux backend is command-scoped but not yet CIDR-scoped. Any `--deny-connect` policy activates the cgroup/connect4 backend, and the loaded program denies IPv4 connects broadly. CIDR map checks are next.
+The current Linux backend is command-scoped and CIDR-scoped for IPv4. `--deny-connect` prefixes are loaded into an eBPF LPM trie map, and the cgroup/connect4 program denies only destinations matching that map.
 
 ## Non-Goals
 

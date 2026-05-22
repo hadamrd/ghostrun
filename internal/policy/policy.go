@@ -57,6 +57,10 @@ func (p Policy) DeniesConnect(addr string) bool {
 	return false
 }
 
+func (p Policy) ConnectPrefixes() []netip.Prefix {
+	return append([]netip.Prefix(nil), p.deniedConnectPrefixes...)
+}
+
 func (p Policy) Empty() bool {
 	return len(p.DeniedWritePrefixes) == 0 && len(p.DeniedConnectCIDRs) == 0
 }
