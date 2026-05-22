@@ -27,8 +27,16 @@ func connect4DenyProgramSpec() *ebpf.ProgramSpec {
 			asm.StoreMem(asm.R2, 4, asm.R3, asm.Word),
 			asm.FnMapLookupElem.Call(),
 			asm.JEq.Imm(asm.R0, 0, "allow"),
+			asm.LoadMapPtr(asm.R1, 0).WithReference("blocked_connects"),
+			asm.Mov.Reg(asm.R2, asm.R10),
+			asm.Add.Imm(asm.R2, -12),
+			asm.StoreImm(asm.R2, 0, 0, asm.Word),
+			asm.FnMapLookupElem.Call(),
+			asm.JEq.Imm(asm.R0, 0, "deny"),
+			asm.Mov.Imm(asm.R1, 1),
+			asm.StoreXAdd(asm.R0, asm.R1, asm.DWord),
 			asm.LoadImm(asm.R0, 0, asm.DWord),
-			asm.Return(),
+			asm.Return().WithSymbol("deny"),
 			asm.LoadImm(asm.R0, 1, asm.DWord).WithSymbol("allow"),
 			asm.Return(),
 		},
@@ -36,8 +44,9 @@ func connect4DenyProgramSpec() *ebpf.ProgramSpec {
 }
 
 type connectObjects struct {
-	Program *ebpf.Program `ebpf:"ghostrun_deny4"`
-	CIDRs   *ebpf.Map     `ebpf:"deny_cidrs"`
+	Program         *ebpf.Program `ebpf:"ghostrun_deny4"`
+	CIDRs           *ebpf.Map     `ebpf:"deny_cidrs"`
+	BlockedConnects *ebpf.Map     `ebpf:"blocked_connects"`
 }
 
 func (o connectObjects) Close() {
@@ -46,6 +55,9 @@ func (o connectObjects) Close() {
 	}
 	if o.CIDRs != nil {
 		o.CIDRs.Close()
+	}
+	if o.BlockedConnects != nil {
+		o.BlockedConnects.Close()
 	}
 }
 
@@ -68,6 +80,12 @@ func loadConnectObjects(p policy.Policy) (connectObjects, error) {
 				MaxEntries: uint32(max(1, len(contents))),
 				Flags:      unix.BPF_F_NO_PREALLOC,
 				Contents:   contents,
+			},
+			"blocked_connects": {
+				Type:       ebpf.Array,
+				KeySize:    4,
+				ValueSize:  8,
+				MaxEntries: 1,
 			},
 		},
 		Programs: map[string]*ebpf.ProgramSpec{
@@ -105,4 +123,15 @@ func connectCIDRContents(p policy.Policy) ([]ebpf.MapKV, error) {
 		return nil, fmt.Errorf("at least one IPv4 deny CIDR is required")
 	}
 	return contents, nil
+}
+
+func (o connectObjects) BlockedConnectCount() (uint64, error) {
+	var count uint64
+	if o.BlockedConnects == nil {
+		return 0, nil
+	}
+	if err := o.BlockedConnects.Lookup(uint32(0), &count); err != nil {
+		return 0, fmt.Errorf("read blocked connect count: %w", err)
+	}
+	return count, nil
 }

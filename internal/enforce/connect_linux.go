@@ -75,15 +75,24 @@ func (connectBackend) Run(request Request) (Result, error) {
 
 	err = cmd.Wait()
 	exitCode := cmd.ProcessState.ExitCode()
+	blockedConnects, countErr := objects.BlockedConnectCount()
+	if countErr != nil {
+		return Result{}, countErr
+	}
 	recorder := report.New()
 	status := EnforcementSucceeded
-	if exitCode != 0 {
-		status = EnforcementBlocked
+	for i := uint64(0); i < blockedConnects; i++ {
 		recorder.Record(report.Event{
 			Kind:     report.EventConnect,
 			Decision: report.DecisionWouldBlock,
 			Target:   "ipv4-connect",
 		})
+	}
+	switch {
+	case blockedConnects > 0:
+		status = EnforcementBlocked
+	case exitCode != 0:
+		status = EnforcementFailed
 	}
 	result := Result{
 		ExitCode: exitCode,

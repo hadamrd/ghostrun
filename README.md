@@ -30,6 +30,7 @@ Current Linux status:
 - `--deny-connect` selects a cgroup/connect4 eBPF backend.
 - The backend creates a temporary cgroup, attaches the program, runs the command inside that cgroup, and removes the cgroup afterward.
 - Denied IPv4 CIDRs are loaded into an eBPF LPM trie map. The connect hook denies destinations matching that map and allows non-matching destinations.
+- Denied connect attempts increment an eBPF counter map; Ghostrun reads it after the command exits and reports blocked attempts even if the command handled the failed connect and exited successfully.
 - Filesystem write blocking is still not active on the current Colima sandbox because BPF LSM is not enabled in the active LSM list.
 
 ## Development

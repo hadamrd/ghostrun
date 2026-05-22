@@ -15,6 +15,7 @@ import (
 	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/link"
 	"github.com/hadamrd/ghostrun/internal/policy"
+	"github.com/hadamrd/ghostrun/internal/report"
 )
 
 func TestConnect4DenyProgramSpecLoads(t *testing.T) {
@@ -206,6 +207,60 @@ func TestConnectBackendRunAllowsConnectOutsideDeniedCIDR(t *testing.T) {
 	}
 }
 
+func TestConnectBackendRunReportsBlockedConnectWhenCommandHandlesError(t *testing.T) {
+	if os.Getenv("GHOSTRUN_BACKEND_CHILD") == "1" {
+		runBackendChild(t)
+		return
+	}
+	if os.Getenv("GHOSTRUN_INTEGRATION") != "1" {
+		t.Skip("set GHOSTRUN_INTEGRATION=1 to run cgroup backend integration test")
+	}
+	if os.Geteuid() != 0 {
+		t.Skip("cgroup backend integration test requires root")
+	}
+
+	listener, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer listener.Close()
+
+	readyFile := filepath.Join(t.TempDir(), "ready")
+	p, err := policy.New(policy.Options{DeniedConnectCIDRs: []string{"127.0.0.0/8"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := Run(Request{
+		Policy: p,
+		Command: []string{
+			os.Args[0],
+			"-test.run", "^TestConnectBackendRunReportsBlockedConnectWhenCommandHandlesError$",
+		},
+		Env: append(os.Environ(),
+			"GHOSTRUN_BACKEND_CHILD=1",
+			"GHOSTRUN_TEST_ADDR="+listener.Addr().String(),
+			"GHOSTRUN_READY_FILE="+readyFile,
+			"GHOSTRUN_EXPECT_CONNECT=handled-denied",
+		),
+		ReadyFile: readyFile,
+	})
+	if err != nil {
+		t.Fatalf("run command with connect backend: %v", err)
+	}
+	if result.ExitCode != 0 {
+		t.Fatalf("exit code = %d, want 0", result.ExitCode)
+	}
+	if result.Status != EnforcementBlocked {
+		t.Fatalf("status = %q, want %q", result.Status, EnforcementBlocked)
+	}
+	if result.Summary.WouldBlock != 1 {
+		t.Fatalf("blocked summary = %#v, want one blocked event", result.Summary)
+	}
+	if len(result.Events) != 1 || result.Events[0].Kind != report.EventConnect || result.Events[0].Decision != report.DecisionWouldBlock {
+		t.Fatalf("unexpected blocked events %#v", result.Events)
+	}
+}
+
 func TestConnectBackendRunAllowsNonNetworkCommand(t *testing.T) {
 	if os.Getenv("GHOSTRUN_INTEGRATION") != "1" {
 		t.Skip("set GHOSTRUN_INTEGRATION=1 to run cgroup backend integration test")
@@ -262,6 +317,11 @@ func runBackendChild(t *testing.T) {
 			t.Fatalf("dial to %s succeeded, want denied connect", addr)
 		}
 		os.Exit(42)
+	case "handled-denied":
+		if err == nil {
+			conn.Close()
+			t.Fatalf("dial to %s succeeded, want denied connect", addr)
+		}
 	default:
 		t.Fatalf("unknown GHOSTRUN_EXPECT_CONNECT %q", expect)
 	}
