@@ -25,6 +25,13 @@ ghostrun --json --deny-write /var/lib/prod -- ./cleanup
 
 Transparent write redirection and fake-success shadow mode are intentionally out of scope for v0.1.
 
+Current Linux status:
+
+- `--deny-connect` selects a cgroup/connect4 eBPF backend.
+- The backend creates a temporary cgroup, attaches the program, runs the command inside that cgroup, and removes the cgroup afterward.
+- The current BPF program blocks IPv4 connects broadly when connect enforcement is active. CIDR-specific BPF map checks are the next implementation slice.
+- Filesystem write blocking is still not active on the current Colima sandbox because BPF LSM is not enabled in the active LSM list.
+
 ## Development
 
 ```bash

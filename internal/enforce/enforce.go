@@ -13,8 +13,10 @@ var (
 )
 
 type Request struct {
-	Policy  policy.Policy
-	Command []string
+	Policy    policy.Policy
+	Command   []string
+	Env       []string
+	ReadyFile string
 }
 
 type Result struct {
@@ -29,6 +31,9 @@ type EnforcementState string
 
 const (
 	EnforcementUnsupported EnforcementState = "unsupported"
+	EnforcementSucceeded   EnforcementState = "succeeded"
+	EnforcementFailed      EnforcementState = "failed"
+	EnforcementBlocked     EnforcementState = "blocked"
 )
 
 func Run(request Request) (Result, error) {

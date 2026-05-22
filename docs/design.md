@@ -20,7 +20,9 @@ Provide an external dry-run mode for command-line tools that did not implement d
 
 The planned Linux implementation should prefer eBPF LSM hooks where available. Policy should be loaded into BPF maps and scoped to a target process or cgroup. Userspace should own process launch, map population, event collection, and final report generation.
 
-The first working kernel-facing slice is cgroup/connect4: Ghostrun can build and load a minimal program spec in the Colima Linux sandbox, attach it to a temporary cgroup, and block a child process from opening an IPv4 TCP connection. Command-scoped cgroup lifecycle and CIDR map checks are next.
+The first working kernel-facing slice is cgroup/connect4: Ghostrun can build and load a minimal program spec in the Colima Linux sandbox, attach it to a temporary cgroup, run a command inside that cgroup, and block that command from opening an IPv4 TCP connection.
+
+The current Linux backend is command-scoped but not yet CIDR-scoped. Any `--deny-connect` policy activates the cgroup/connect4 backend, and the loaded program denies IPv4 connects broadly. CIDR map checks are next.
 
 ## Non-Goals
 
