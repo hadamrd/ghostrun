@@ -33,3 +33,9 @@ go run ./cmd/ghostrun --deny-write /etc -- echo hello
 ```
 
 On non-Linux hosts, development focuses on policy parsing, reporting, CLI behavior, and documentation.
+
+Linux/eBPF checks can run through Colima-backed Docker:
+
+```bash
+scripts/test-linux.sh
+```

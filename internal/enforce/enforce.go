@@ -35,9 +35,5 @@ func Run(request Request) (Result, error) {
 	if len(request.Command) == 0 {
 		return Result{}, ErrMissingCommand
 	}
-	return Result{
-		Command: request.Command,
-		Status:  EnforcementUnsupported,
-		Summary: report.New().Summary(),
-	}, ErrUnsupported
+	return selectBackend(request.Policy).Run(request)
 }
