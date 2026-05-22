@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 
+	"github.com/hadamrd/ghostrun/internal/enforce"
 	"github.com/hadamrd/ghostrun/internal/policy"
 )
 
@@ -48,16 +49,24 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 
+	result, err := enforce.Run(enforce.Request{Policy: p, Command: cfg.Command})
 	if cfg.JSON {
-		_ = json.NewEncoder(stdout).Encode(map[string]any{
-			"status":  "not_implemented",
-			"message": "kernel enforcement is not wired yet",
-			"command": cfg.Command,
-		})
+		if err != nil {
+			_ = json.NewEncoder(stdout).Encode(map[string]any{
+				"status":  result.Status,
+				"message": err.Error(),
+				"command": cfg.Command,
+			})
+			return 1
+		}
+		_ = json.NewEncoder(stdout).Encode(result)
+		return result.ExitCode
+	}
+	if err != nil {
+		fmt.Fprintln(stderr, err)
 		return 1
 	}
-	fmt.Fprintln(stderr, "kernel enforcement is not wired yet")
-	return 1
+	return result.ExitCode
 }
 
 func parseArgs(args []string) (config, error) {

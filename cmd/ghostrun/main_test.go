@@ -52,3 +52,18 @@ func TestRunRefusesWithoutPolicy(t *testing.T) {
 		t.Fatal("expected safety error on stderr")
 	}
 }
+
+func TestRunReportsUnsupportedBackendAsNonZero(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"--json", "--deny-write", "/etc", "--", "echo", "hello"}, &stdout, &stderr)
+
+	if code == 0 {
+		t.Fatal("expected non-zero exit with unsupported backend")
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("stderr = %q, want empty for json output", stderr.String())
+	}
+	if !bytes.Contains(stdout.Bytes(), []byte(`"status":"unsupported"`)) {
+		t.Fatalf("stdout = %q, want unsupported status", stdout.String())
+	}
+}
