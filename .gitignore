@@ -1,0 +1,4 @@
+/ghostrun
+/dist/
+*.test
+coverage.out
